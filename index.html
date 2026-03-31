@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase 售票與驗票系統</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; color: #333; max-width: 600px; margin: 40px auto; padding: 20px; }
+        h1 { text-align: center; color: #2c3e50; }
+        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .message { display: none; padding: 15px; margin-bottom: 20px; font-weight: bold; border-radius: 5px; }
+        .success { background-color: #e8f8f5; border-left: 5px solid #1abc9c; color: #0e6251; }
+        .error { background-color: #fdedec; border-left: 5px solid #e74c3c; color: #78281f; }
+        input[type="text"] { padding: 10px; width: calc(100% - 110px); border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        button { padding: 10px; width: 100px; background-color: #f5a623; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #d08c1d; }
+        .ticket-id { font-family: monospace; color: #e74c3c; font-size: 1.2em; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <h1>🎫 雲端售票與驗票系統</h1>
+    
+    <div id="msgBox" class="message"></div>
+
+    <div class="box">
+        <h2>🛒 購票區 (總限量: 2 張)</h2>
+        <input type="text" id="userName" placeholder="請輸入您的姓名">
+        <button id="buyBtn">購買票券</button>
+    </div>
+
+    <div class="box">
+        <h2>✅ 驗票區</h2>
+        <input type="text" id="ticketId" placeholder="請輸入票號">
+        <button id="validateBtn">驗證入場</button>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDoc, doc, updateDoc, getDocs } 
+        from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        // ⚠️ 【請替換成你自己的 Firebase 設定】 ⚠️
+        const firebaseConfig = {
+            apiKey: "你的_API_KEY",
+            authDomain: "你的_PROJECT_ID.firebaseapp.com",
+            projectId: "你的_PROJECT_ID",
+            storageBucket: "你的_PROJECT_ID.appspot.com",
+            messagingSenderId: "你的_SENDER_ID",
+            appId: "你的_APP_ID"
+        };
+
+        // 初始化 Firebase 與 Firestore
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const TOTAL_TICKETS = 2;
+
+        // UI 互動函數
+        const showMsg = (text, isSuccess) => {
+            const msgBox = document.getElementById("msgBox");
+            msgBox.innerHTML = text;
+            msgBox.className = `message ${isSuccess ? 'success' : 'error'}`;
+            msgBox.style.display = "block";
+        };
+
+        // ==============================
+        // 售票邏輯
+        // ==============================
+        document.getElementById("buyBtn").addEventListener("click", async () => {
+            const userName = document.getElementById("userName").value.trim();
+            if (!userName) return alert("請輸入姓名！");
+
+            try {
+                // 1. 檢查目前已售出的票數
+                const querySnapshot = await getDocs(collection(db, "tickets"));
+                if (querySnapshot.size >= TOTAL_TICKETS) {
+                    showMsg("❌ 售票失敗：很抱歉，票券已售罄！", false);
+                    return;
+                }
+
+                // 2. 寫入資料庫，Firebase 會自動產生隨機的 Document ID 當作票號
+                const docRef = await addDoc(collection(db, "tickets"), {
+                    user: userName,
+                    status: "unused",
+                    createdAt: new Date()
+                });
+
+                showMsg(`✅ 購票成功！${userName} 的專屬票號是：<br><br><span class='ticket-id'>${docRef.id}</span><br><br>（請複製此票號用於驗票）`, true);
+                document.getElementById("userName").value = "";
+
+            } catch (error) {
+                console.error("購票發生錯誤:", error);
+                showMsg("❌ 系統發生錯誤，請檢查 Console。", false);
+            }
+        });
+
+        // ==============================
+        // 驗票邏輯
+        // ==============================
+        document.getElementById("validateBtn").addEventListener("click", async () => {
+            const ticketId = document.getElementById("ticketId").value.trim();
+            if (!ticketId) return alert("請輸入票號！");
+
+            try {
+                const ticketRef = doc(db, "tickets", ticketId);
+                const ticketSnap = await getDoc(ticketRef);
+
+                // 1. 檢查票號是否存在
+                if (!ticketSnap.exists()) {
+                    showMsg("❌ 驗票失敗：無效的票券，系統中找不到此票號。", false);
+                    return;
+                }
+
+                const ticketData = ticketSnap.data();
+
+                // 2. 檢查是否已經使用過
+                if (ticketData.status === "used") {
+                    showMsg(`⚠️ 驗票失敗：此票券已失效！已由 <b>${ticketData.user}</b> 使用過。`, false);
+                    return;
+                }
+
+                // 3. 驗票成功，將狀態更新為 'used'
+                await updateDoc(ticketRef, { status: "used" });
+                showMsg(`✅ 驗票成功！歡迎入場，<b>${ticketData.user}</b>。`, true);
+                document.getElementById("ticketId").value = "";
+
+            } catch (error) {
+                console.error("驗票發生錯誤:", error);
+                showMsg("❌ 系統發生錯誤，請檢查 Console。", false);
+            }
+        });
+    </script>
+</body>
+</html>
